@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hotaru · can a dish of neurons learn Pong?</title>
+  <meta name="description" content="Two identical simulated neuron cultures play Pong through a 60-electrode array. One gets DishBrain's feedback, the other gets the same pulses at random. Watch whether their rallies diverge.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="./" aria-label="Hotaru home">
+      <img src="favicon.svg" alt="" width="26" height="26">
+      <span>Hotaru</span><span class="kanji" lang="ja">蛍</span>
+    </a>
+    <div class="nav-links">
+      <a href="./" aria-current="page">Pong<span class="wide"> experiment</span></a>
+      <a href="culture.html">Culture</a>
+      <a href="https://github.com/raskell-io/hotaru">GitHub</a>
+    </div>
+  </nav>
+
+  <main id="top">
+    <header class="intro">
+      <p class="eyebrow">Simulation · v0.2 · the closed loop</p>
+      <h1>Can a dish of neurons learn Pong?</h1>
+      <p class="lede">
+        Two identical cultures play Pong through their electrodes. The first gets the feedback from
+        the DishBrain experiment: a predictable pulse when it hits the ball, four seconds of noise when
+        it misses. The second gets the same pulses at random. Watch whether their rallies drift apart.
+      </p>
+    </header>
+
+    <section class="arena" aria-label="The two cultures">
+      <article class="player" id="p-feedback" data-tone="firefly">
+        <header class="player-head">
+          <div>
+            <h2>DishBrain feedback</h2>
+            <p class="note">Predictable pulse after a hit, noise after a miss.</p>
+          </div>
+          <span class="chip" data-role="chip">Playing</span>
+        </header>
+        <div class="stage">
+          <div class="dish small" data-role="dish">
+            <canvas data-role="neurons" aria-label="Neurons of the feedback culture"></canvas>
+            <canvas data-role="overlay" aria-hidden="true"></canvas>
+          </div>
+          <canvas class="pong" data-role="pong" aria-label="Pong played by the feedback culture"></canvas>
+        </div>
+        <dl class="stats">
+          <div><dt>Rallies</dt><dd data-stat="rallies">0</dd></div>
+          <div><dt>Hits per rally</dt><dd data-stat="mean">–</dd></div>
+          <div><dt>Last 5 min</dt><dd data-stat="recent">–</dd></div>
+          <div><dt>Aces</dt><dd data-stat="aces">–</dd></div>
+          <div><dt>Mean synapse</dt><dd data-stat="weight">–</dd></div>
+        </dl>
+      </article>
+
+      <article class="player" id="p-control" data-tone="ice">
+        <header class="player-head">
+          <div>
+            <h2>Control</h2>
+            <label class="note control-pick">
+              <select id="control" aria-label="Control condition">
+                <option value="random" selected>Same pulses, at random</option>
+                <option value="silent">No feedback at all</option>
+              </select>
+            </label>
+          </div>
+          <span class="chip" data-role="chip">Playing</span>
+        </header>
+        <div class="stage">
+          <div class="dish small" data-role="dish">
+            <canvas data-role="neurons" aria-label="Neurons of the control culture"></canvas>
+            <canvas data-role="overlay" aria-hidden="true"></canvas>
+          </div>
+          <canvas class="pong" data-role="pong" aria-label="Pong played by the control culture"></canvas>
+        </div>
+        <dl class="stats">
+          <div><dt>Rallies</dt><dd data-stat="rallies">0</dd></div>
+          <div><dt>Hits per rally</dt><dd data-stat="mean">–</dd></div>
+          <div><dt>Last 5 min</dt><dd data-stat="recent">–</dd></div>
+          <div><dt>Aces</dt><dd data-stat="aces">–</dd></div>
+          <div><dt>Mean synapse</dt><dd data-stat="weight">–</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section class="lower">
+      <div class="card chart-card">
+        <div class="trace-head">
+          <h2>Hits per rally</h2>
+          <span class="note">mean over the last 2 minutes of each culture's play</span>
+        </div>
+        <canvas id="chart" aria-label="Hits per rally over time for both cultures"></canvas>
+        <p class="legend left">
+          <span><i class="line firefly"></i>DishBrain feedback</span>
+          <span><i class="line ice"></i><span id="legend-control">Control, random feedback</span></span>
+          <span class="muted">Simulated time <b id="s-time">0:00</b></span>
+        </p>
+      </div>
+
+      <div class="card controls">
+        <div class="row">
+          <button id="play" class="btn primary" aria-pressed="true">Pause</button>
+          <button id="new" class="btn">New pair</button>
+          <button id="share" class="btn" title="Copy a link to this pair">Copy link</button>
+        </div>
+        <label>Speed
+          <select id="speed">
+            <option value="1" selected>1× real time</option>
+            <option value="2">2×</option>
+            <option value="5">5×</option>
+            <option value="10">10×</option>
+            <option value="1000">As fast as possible</option>
+          </select>
+        </label>
+        <label>Neurons each
+          <select id="size">
+            <option value="1024">1 024</option>
+            <option value="2048" selected>2 048</option>
+            <option value="4096">4 096</option>
+          </select>
+        </label>
+        <p class="note">Seed <b id="s-seed">–</b> · both cultures grow from it, so they start identical.</p>
+        <p class="note" id="slow" hidden>Your device can't keep up at this speed; running as fast as it can.</p>
+        <p class="legend left roles">
+          <span><i class="sq sensory"></i>sensory</span>
+          <span><i class="sq up"></i>motor up</span>
+          <span><i class="sq down"></i>motor down</span>
+        </p>
+      </div>
+    </section>
+
+    <section class="about" id="about">
+      <div>
+        <h2>How the loop works</h2>
+        <ul>
+          <li><b>Sensing.</b> The two middle columns of electrodes are sensory. The row that matches the ball's height is pulsed, from 4 Hz when the ball is far away to 40 Hz when it reaches the paddle.</li>
+          <li><b>Acting.</b> The outer columns are motor regions. More spikes in the top half move the paddle up, more in the bottom half move it down.</li>
+          <li><b>Feedback.</b> After a hit, all sensory electrodes pulse at 100 Hz for 100 ms. After a miss, random electrodes fire at random times for 4 s while the ball waits to be served.</li>
+          <li><b>Plasticity.</b> Synapses change with spike timing (STDP): input that arrives just before a neuron fires gets stronger, input that arrives just after gets weaker.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>What we found so far</h2>
+        <p>
+          We ran 16 culture pairs of 2 048 neurons for 20 simulated minutes per condition and compared
+          the first five minutes with the last five. With DishBrain feedback, rallies grew by
+          0.05 ± 0.05 hits; with random feedback they changed by −0.02 ± 0.04, and without feedback by
+          0.00 ± 0.05. That is no reliable learning. With 4 096 neurons, or with stronger plasticity,
+          the picture was the same.
+        </p>
+        <p>
+          One likely reason: STDP links spikes about 20 ms apart, but the feedback arrives seconds after
+          the motor activity that earned it. Something has to bridge that gap, and finding out what is
+          the next experiment. Run your own pair here and see whether your seed behaves differently.
+        </p>
+      </div>
+      <div>
+        <h2>Background</h2>
+        <p>
+          DishBrain wired real cortical neurons to Pong and reported that rallies improved within
+          minutes of feedback. The interpretation is debated. Hotaru is a simplified model of that
+          protocol, not of real neurons, and makes no claim about either.
+        </p>
+        <p class="refs">
+          Kagan et al. (2022), <i>In vitro neurons learn and exhibit sentience when embodied in a simulated
+          game-world</i>, Neuron. Izhikevich (2003). Tsodyks &amp; Markram (1997). Sinapayen, Masumori &amp;
+          Ikegami (2017), <i>Learning by stimulation avoidance</i>. Reproduce the numbers with
+          <code>cargo run --release --example experiment</code>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Hotaru is a <a href="https://raskell.io">raskell.io</a> simulation · MIT</span>
+    <span>This is a simplified model of a culture, not a claim about real brains.</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
