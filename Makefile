@@ -2,7 +2,7 @@ PORT ?= 8646
 WASM := target/wasm32-unknown-unknown/release/hotaru_core.wasm
 DIST := dist
 
-.PHONY: build serve site test probe clean
+.PHONY: build serve site test probe experiment clean
 
 # The simulation, compiled for the web page.
 build:
@@ -27,6 +27,10 @@ test:
 # Headless activity report, e.g. make probe ARGS="seed=3 neurons=8192".
 probe:
 	cargo run --release --example probe -- $(ARGS)
+
+# Pong under each feedback condition, e.g. make experiment ARGS="seeds=16 minutes=20".
+experiment:
+	cargo run --release --example experiment -- $(ARGS)
 
 clean:
 	cargo clean

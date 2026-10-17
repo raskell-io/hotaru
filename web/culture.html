@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hotaru · culture explorer</title>
+  <meta name="description" content="Hotaru simulates thousands of spiking neurons growing on a 60-electrode array. Watch network bursts sweep the dish, and stimulate it yourself.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="./" aria-label="Hotaru home">
+      <img src="favicon.svg" alt="" width="26" height="26">
+      <span>Hotaru</span><span class="kanji" lang="ja">蛍</span>
+    </a>
+    <div class="nav-links">
+      <a href="./">Pong<span class="wide"> experiment</span></a>
+      <a href="culture.html" aria-current="page">Culture</a>
+      <a href="https://github.com/raskell-io/hotaru">GitHub</a>
+    </div>
+  </nav>
+
+  <main id="top">
+    <header class="intro">
+      <p class="eyebrow">Simulation · culture explorer</p>
+      <h1>A neuron culture, alive in your browser.</h1>
+      <p class="lede">
+        Thousands of simulated neurons grow on a 60-electrode array. Left alone they stay quiet,
+        then fire together in bursts that sweep across the dish. Click an electrode to stimulate it.
+      </p>
+    </header>
+
+    <section class="lab" aria-label="Simulation">
+      <div class="dish-wrap">
+        <div class="dish" id="dish">
+          <canvas id="neurons" aria-label="Neurons in the dish; each flash is a spike"></canvas>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div class="tip" id="tip" hidden></div>
+        </div>
+        <p class="legend">
+          <span><i class="dot exc"></i>excitatory</span>
+          <span><i class="dot inh"></i>inhibitory</span>
+          <span><i class="sq"></i>electrode, click to stimulate</span>
+        </p>
+      </div>
+
+      <aside class="panel">
+        <div class="card">
+          <h2>Electrode array</h2>
+          <canvas id="mea" aria-label="Activity recorded by each of the 60 electrodes"></canvas>
+          <p class="note">Spikes heard by each electrode, 8×8 grid at 200 µm pitch.</p>
+        </div>
+
+        <div class="card stats" aria-live="off">
+          <div><span class="k">Time</span><span class="v" id="s-time">0.0 s</span></div>
+          <div><span class="k">Mean rate</span><span class="v" id="s-rate">–</span></div>
+          <div><span class="k">Bursts</span><span class="v" id="s-bursts">–</span></div>
+          <div><span class="k">Neurons</span><span class="v" id="s-neurons">–</span></div>
+          <div><span class="k">Synapses</span><span class="v" id="s-synapses">–</span></div>
+          <div><span class="k">Seed</span><span class="v" id="s-seed">–</span></div>
+        </div>
+
+        <div class="card controls">
+          <div class="row">
+            <button id="play" class="btn primary" aria-pressed="true">Pause</button>
+            <button id="new" class="btn">New culture</button>
+            <button id="share" class="btn" title="Copy a link to this culture">Copy link</button>
+          </div>
+          <label>Speed
+            <select id="speed">
+              <option value="0.1">0.1× (watch waves)</option>
+              <option value="0.25">¼×</option>
+              <option value="0.5">½×</option>
+              <option value="1" selected>1× real time</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select>
+          </label>
+          <label>Neurons
+            <select id="size">
+              <option value="1024">1 024</option>
+              <option value="2048">2 048</option>
+              <option value="4096" selected>4 096</option>
+              <option value="8192">8 192</option>
+            </select>
+          </label>
+          <p class="note" id="slow" hidden>Your device can't keep up at this speed; running as fast as it can.</p>
+        </div>
+      </aside>
+
+      <div class="card traces">
+        <div class="trace-head">
+          <h2>Spike raster</h2>
+          <span class="note">last 3 s · one row per neuron, sorted left → right across the dish</span>
+        </div>
+        <canvas id="raster" aria-label="Spike raster"></canvas>
+        <div class="trace-head">
+          <h2>Population rate</h2>
+          <span class="note">spikes per neuron per second, 10 ms bins</span>
+        </div>
+        <canvas id="rate" aria-label="Population firing rate"></canvas>
+      </div>
+    </section>
+
+    <section class="about" id="about">
+      <div>
+        <h2>What you're watching</h2>
+        <p>
+          Each point is a neuron, and each flash is a spike. Neurons connect mostly to their neighbours,
+          so activity spreads as a wave. A burst ends when the synapses run out of resources, and the
+          culture stays quiet for a few seconds while they recover. Real cultures on multi-electrode
+          arrays show the same rhythm. Slow the speed down to 0.1× to watch a burst travel.
+        </p>
+      </div>
+      <div>
+        <h2>The model</h2>
+        <ul>
+          <li>Izhikevich neurons: 80% excitatory (regular spiking and chattering), 20% fast-spiking inhibitory.</li>
+          <li>100 synapses each, mostly within ~150 µm, with delays set by distance at 150 µm/ms.</li>
+          <li>Short-term synaptic depression (Tsodyks–Markram), which shapes the bursts.</li>
+          <li>Sparse random input at 0.1 Hz per neuron, like spontaneous release.</li>
+          <li>Deterministic: a seed always grows the same culture.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>The Pong experiment</h2>
+        <p>
+          The same cultures can also play Pong through their electrodes, following the DishBrain
+          protocol: predictable feedback when they hit the ball, noise when they miss. A control
+          culture with random feedback plays next to them.
+          <a href="./">Run the experiment</a>.
+        </p>
+        <p class="refs">
+          Izhikevich (2003), <i>Simple model of spiking neurons</i>. Tsodyks &amp; Markram (1997).
+          Kagan et al. (2022), <i>In vitro neurons learn and exhibit sentience when embodied in a simulated
+          game-world</i>. Sinapayen, Masumori &amp; Ikegami (2017), <i>Learning by stimulation avoidance</i>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Hotaru is a <a href="https://raskell.io">raskell.io</a> simulation · MIT</span>
+    <span>This is a simplified model of a culture, not a claim about real brains.</span>
+  </footer>
+
+  <script type="module" src="culture.js"></script>
+</body>
+</html>

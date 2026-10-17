@@ -11,7 +11,9 @@
 //! for a given seed and [`Params`].
 
 pub mod mea;
+pub mod pong;
 pub mod rng;
+pub mod session;
 #[cfg(feature = "web")]
 mod web;
 
@@ -52,6 +54,14 @@ pub struct Params {
     pub record_radius: f32,
     pub stim_radius: f32,
     pub stim_current: f32,
+    /// Spike-timing-dependent plasticity on synapses from excitatory
+    /// neurons: pre before post strengthens, post before pre weakens.
+    pub plasticity: bool,
+    pub stdp_tau: f32,
+    pub stdp_gain: f32,
+    pub stdp_loss: f32,
+    /// Upper bound for a plastic weight, as a multiple of `w_exc`.
+    pub w_max: f32,
 }
 
 impl Default for Params {
@@ -73,6 +83,11 @@ impl Default for Params {
             record_radius: 50.0,
             stim_radius: 100.0,
             stim_current: 30.0,
+            plasticity: false,
+            stdp_tau: 20.0,
+            stdp_gain: 0.10,
+            stdp_loss: 0.12,
+            w_max: 2.0,
         }
     }
 }
@@ -102,9 +117,17 @@ pub struct Culture {
     syn_target: Vec<u32>,
     syn_delay: Vec<u8>,
     syn_weight: Vec<f32>,
+    /// Synapse indices grouped by postsynaptic neuron, for plasticity.
+    in_start: Vec<u32>,
+    in_synapse: Vec<u32>,
+    /// Presynaptic neuron of each entry in `in_synapse`.
+    in_pre: Vec<u32>,
     /// Pending input current, DELAYS slots of one value per neuron.
     ring: Vec<f32>,
     fired: Vec<u32>,
+    /// STDP traces: recent spiking as presynaptic and postsynaptic partner.
+    pre_trace: Vec<f32>,
+    post_trace: Vec<f32>,
 
     electrodes: Vec<Electrode>,
     electrode_positions: Vec<f32>,
@@ -118,6 +141,8 @@ pub struct Culture {
     spikes: Vec<u32>,
     dropped: u32,
     counts: Vec<u32>,
+    /// Spikes each electrode heard during the most recent step.
+    step_counts: Vec<u32>,
     glow: Vec<f32>,
 }
 
@@ -190,6 +215,26 @@ impl Culture {
         }
         syn_start.push(syn_target.len() as u32);
 
+        let mut in_start = vec![0u32; n + 1];
+        for &j in &syn_target {
+            in_start[j as usize + 1] += 1;
+        }
+        for k in 1..=n {
+            in_start[k] += in_start[k - 1];
+        }
+        let mut fill = in_start.clone();
+        let mut in_synapse = vec![0u32; syn_target.len()];
+        let mut in_pre = vec![0u32; syn_target.len()];
+        for i in 0..n {
+            let span = syn_start[i] as usize..syn_start[i + 1] as usize;
+            for (k, &j) in span.clone().zip(&syn_target[span]) {
+                let j = j as usize;
+                in_synapse[fill[j] as usize] = k as u32;
+                in_pre[fill[j] as usize] = i as u32;
+                fill[j] += 1;
+            }
+        }
+
         let electrodes = mea::layout();
         let electrode_positions = electrodes.iter().flat_map(|e| [e.x, e.y]).collect();
         let mut recorded_by = vec![NONE; n];
@@ -231,9 +276,15 @@ impl Culture {
             syn_target,
             syn_delay,
             syn_weight,
+            in_start,
+            in_synapse,
+            in_pre,
             ring: vec![0.0; DELAYS * n],
             fired: Vec::with_capacity(n),
+            pre_trace: vec![0.0; n],
+            post_trace: vec![0.0; n],
             counts: vec![0; electrodes.len()],
+            step_counts: vec![0; electrodes.len()],
             electrodes,
             electrode_positions,
             recorded_by,
@@ -283,6 +334,11 @@ impl Culture {
             self.resources[i] += (1.0 - self.resources[i]) * recover;
         }
 
+        self.step_counts.iter_mut().for_each(|c| *c = 0);
+        if self.params.plasticity {
+            self.plasticity();
+        }
+
         for &i in &self.fired {
             let i = i as usize;
             let efficacy = if self.kinds[i] == 0 {
@@ -304,11 +360,71 @@ impl Culture {
             } else {
                 self.dropped += 1;
             }
-            if let Some(c) = self.counts.get_mut(self.recorded_by[i] as usize) {
-                *c += 1;
+            if let Some(e) = self.electrode_of(i) {
+                self.counts[e] += 1;
+                self.step_counts[e] += 1;
             }
         }
         self.time = t + 1;
+    }
+
+    fn electrode_of(&self, neuron: usize) -> Option<usize> {
+        let e = self.recorded_by[neuron];
+        (e != NONE).then_some(e as usize)
+    }
+
+    /// Pair-based STDP with exponential traces, applied to the neurons that
+    /// fired this step. Delays are ignored; most are one or two ms.
+    fn plasticity(&mut self) {
+        let p = &self.params;
+        let decay = (-1.0 / p.stdp_tau).exp();
+        let w_max = p.w_max * p.w_exc;
+        for (pre, post) in self.pre_trace.iter_mut().zip(self.post_trace.iter_mut()) {
+            *pre *= decay;
+            *post *= decay;
+        }
+        for &f in &self.fired {
+            let f = f as usize;
+            // f fired after its excitatory inputs: strengthen them.
+            let (s, e) = (self.in_start[f] as usize, self.in_start[f + 1] as usize);
+            for (&k, &pre) in self.in_synapse[s..e].iter().zip(&self.in_pre[s..e]) {
+                let (k, pre) = (k as usize, pre as usize);
+                if self.kinds[pre] == 0 {
+                    let w = self.syn_weight[k] + p.stdp_gain * self.pre_trace[pre];
+                    self.syn_weight[k] = w.min(w_max);
+                }
+            }
+            // f fired after its targets: weaken its outgoing synapses.
+            if self.kinds[f] == 0 {
+                let (s, e) = (self.syn_start[f] as usize, self.syn_start[f + 1] as usize);
+                for k in s..e {
+                    let post = self.post_trace[self.syn_target[k] as usize];
+                    self.syn_weight[k] = (self.syn_weight[k] - p.stdp_loss * post).max(0.0);
+                }
+            }
+        }
+        for &f in &self.fired {
+            self.pre_trace[f as usize] += 1.0;
+            self.post_trace[f as usize] += 1.0;
+        }
+    }
+
+    /// Mean weight of the synapses from excitatory neurons.
+    pub fn mean_excitatory_weight(&self) -> f32 {
+        let (mut sum, mut count) = (0.0f64, 0usize);
+        for i in 0..self.params.neurons {
+            if self.kinds[i] == 0 {
+                let (s, e) = (self.syn_start[i] as usize, self.syn_start[i + 1] as usize);
+                sum += self.syn_weight[s..e].iter().map(|&w| w as f64).sum::<f64>();
+                count += e - s;
+            }
+        }
+        (sum / count.max(1) as f64) as f32
+    }
+
+    /// Spikes heard by each electrode during the most recent step.
+    pub fn step_counts(&self) -> &[u32] {
+        &self.step_counts
     }
 
     pub fn run(&mut self, ms: u32) {
