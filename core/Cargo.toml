@@ -1,0 +1,15 @@
+[package]
+name = "hotaru-core"
+description = "A simulated neuron culture on a multi-electrode array"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Exports the C ABI the web page calls. Only for building web/hotaru.wasm.
+web = []

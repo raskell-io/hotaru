@@ -1,0 +1,4 @@
+/target
+/web/hotaru.wasm
+/dist
+.DS_Store
