@@ -7,6 +7,7 @@ const ROLLING_MS = 120_000;   // window of the hits-per-rally chart
 const RECENT_MS = 300_000;
 const SIZES = [1024, 2048, 4096];
 const CONTROLS = { random: 'Control, random feedback', silent: 'Control, no feedback' };
+const COMPARE_AFTER = 10;     // rallies each before the verdict compares them
 
 const UP = [190, 225, 120];
 const DOWN = [120, 190, 225];
@@ -170,7 +171,11 @@ class Player {
       if (r[k] > now - RECENT_MS) { recentHits += r[k + 1]; recent++; }
     }
     const count = r.length / 2;
-    return { count, mean: count ? hits / count : NaN, aces: count ? aces / count : NaN, recent: recent ? recentHits / recent : NaN };
+    const mean = count ? hits / count : NaN;
+    let sq = 0;
+    for (let k = 1; k < r.length; k += 2) sq += (r[k] - mean) ** 2;
+    const variance = count > 1 ? sq / (count - 1) : NaN;
+    return { count, mean, variance, aces: count ? aces / count : NaN, recent: recent ? recentHits / recent : NaN };
   }
 
   drawStats() {
@@ -208,6 +213,68 @@ const players = [new Player($('p-feedback')), new Player($('p-control'))];
 let seed;
 let size;
 let control;
+/** Simulated ms at which the two cultures first fired differently, or null. */
+let splitAt = null;
+
+function sameSpikes() {
+  const [a, b] = players.map((p) => p.culture.spikes());
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// --- verdict ----------------------------------------------------------------------
+
+const clock = (ms) => {
+  const t = Math.floor(ms / 1000);
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
+
+/** One plain sentence on where the comparison stands. */
+function drawVerdict() {
+  const el = $('verdict');
+  let state;
+  let html;
+  if (splitAt === null) {
+    state = 'same';
+    html = '<b>The two cultures are still exact copies.</b> Same neurons, same serves, and so far the same input, '
+      + 'so they move in step. They split the first time their feedback differs.';
+  } else {
+    const [f, c] = players.map((p) => p.summary());
+    const n = Math.min(f.count, c.count);
+    if (n < COMPARE_AFTER) {
+      state = 'split';
+      html = `<b>They split at ${clock(splitAt)}</b>, when their feedback first differed. From here on the feedback is `
+        + `the only difference between them. A fair comparison needs about ${COMPARE_AFTER} rallies each `
+        + `(${n} so far); the 5× or 10× speed gets there sooner.`;
+    } else {
+      const diff = f.mean - c.mean;
+      const chance = 2 * Math.sqrt(f.variance / f.count + c.variance / c.count);
+      const nums = `<b class="firefly">${f.mean.toFixed(2)}</b> hits per rally with feedback, `
+        + `<b class="ice">${c.mean.toFixed(2)}</b> for the control`;
+      if (Math.abs(diff) <= chance) {
+        state = 'split';
+        html = `After ${f.count} and ${c.count} rallies: ${nums}. The gap is within what chance alone produces `
+          + `(±${chance.toFixed(2)}), so <b>the feedback has not made a difference</b>. That is what we found across `
+          + '16 cultures, too.';
+      } else if (diff > 0) {
+        state = 'ahead';
+        html = `After ${f.count} and ${c.count} rallies: ${nums}. <b>The feedback culture is ahead</b> by more than `
+          + `chance alone would explain (±${chance.toFixed(2)}). Across 16 cultures such leads did not hold up; `
+          + 'see whether this one does.';
+      } else {
+        state = 'split';
+        html = `After ${f.count} and ${c.count} rallies: ${nums}. <b>The control is ahead</b> by more than chance `
+          + `alone would explain (±${chance.toFixed(2)}), so the feedback is not helping this culture.`;
+      }
+    }
+  }
+  if (el.dataset.html !== html) {
+    el.innerHTML = html;
+    el.dataset.html = html;
+  }
+  el.dataset.state = state;
+}
 
 // --- chart ------------------------------------------------------------------------
 
@@ -290,6 +357,7 @@ function begin(s, n, c) {
   $('s-seed').textContent = String(seed);
   $('legend-control').textContent = CONTROLS[control];
   carry = 0;
+  splitAt = null;
   history.replaceState(null, '', `#seed=${seed}&n=${size}&control=${control}`);
 }
 
@@ -341,6 +409,7 @@ function frame(now) {
     if (ms > 0) {
       const t0 = performance.now();
       for (const p of players) p.step(ms);
+      if (splitAt === null && !sameSpikes()) splitAt = players[0].culture.time;
       costPerMs = costPerMs * 0.9 + ((performance.now() - t0) / ms) * 0.1;
     }
     $('slow').hidden = slowFrames < 30;
@@ -350,8 +419,8 @@ function frame(now) {
     lastStats = now;
     for (const p of players) p.drawStats();
     drawChart();
-    const t = Math.floor(players[0].culture.time / 1000);
-    $('s-time').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    drawVerdict();
+    $('s-time').textContent = clock(players[0].culture.time);
   }
   if (now - lastWeight > 2000) {
     lastWeight = now;

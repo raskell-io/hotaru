@@ -30,11 +30,15 @@
       <p class="eyebrow">Simulation · v0.2 · the closed loop</p>
       <h1>Can a dish of neurons learn Pong?</h1>
       <p class="lede">
-        Two identical cultures play Pong through their electrodes. The first gets the feedback from
-        the DishBrain experiment: a predictable pulse when it hits the ball, four seconds of noise when
-        it misses. The second gets the same pulses at random. Watch whether their rallies drift apart.
+        Two copies of the same culture play Pong through their electrodes and face the same serves.
+        The only difference is what they are told after each hit or miss. The first gets the feedback
+        from the DishBrain experiment: a predictable pulse after a hit, four seconds of noise after a
+        miss. The control gets the same pulses at random. If the feedback teaches the culture anything,
+        its rallies should get longer than the control's.
       </p>
     </header>
+
+    <p class="verdict" id="verdict" data-state="same" aria-live="polite"></p>
 
     <section class="arena" aria-label="The two cultures">
       <article class="player" id="p-feedback" data-tone="firefly">
