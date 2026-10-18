@@ -88,12 +88,13 @@ longer.
 
 Turning STDP into reward-modulated plasticity (eligibility traces of 200 ms
 to 1 s, a reward of hit or miss against the recent hit rate) did not change
-that: +0.06 ± 0.06 with feedback against −0.04 random at the best setting.
+that: −0.01 ± 0.05 with feedback against −0.06 random at the best setting
+(500 ms traces).
 
 **Why: the ball did not reach the paddle.** The sensory electrodes sit 400 to
 600 µm from the motor ones. With connections mostly within 150 µm, as in v0.2,
 the correlation of the ball's height with the paddle drive was about zero
-(−0.04 to +0.04), so there was nothing to learn. With a mean connection length
+(−0.03 to +0.01), so there was nothing to learn. With a mean connection length
 of 500 µm it is about +0.1 at 2 048 neurons and +0.2 at 4 096 (`make
 coupling`). The page shows it live as "Ball → paddle".
 
@@ -101,14 +102,14 @@ coupling`). The page shows it live as "Ball → paddle".
 
 | Condition | 2 048 neurons | 4 096 neurons |
 |---|---|---|
-| Quiet toward the ball | +0.32 ± 0.10 (13 of 16) | +0.77 ± 0.25 (11 of 16) |
-| Quiet toward the mirrored ball | +0.01 ± 0.06 (8 of 16) | −0.03 ± 0.07 (6 of 16) |
-| No avoidance | +0.05 ± 0.06 (8 of 16) | +0.06 ± 0.05 (7 of 16) |
+| Quiet toward the ball | +0.25 ± 0.10 (12 of 16) | +0.75 ± 0.18 (15 of 16) |
+| Quiet toward the mirrored ball | +0.06 ± 0.05 (12 of 16) | +0.04 ± 0.06 (9 of 16) |
+| No avoidance | +0.15 ± 0.05 (11 of 16) | −0.00 ± 0.05 (6 of 16) |
 
-At 2 048 neurons the learning cultures end at 0.96 hits per rally against
-0.58 and 0.52; at 4 096 at 1.65 against 0.55. With STDP switched off nothing
-changes (+0.03, +0.01, +0.02), and with the short v0.2 wiring neither
-(+0.03, −0.03, −0.05): the culture learns through plasticity, and only when
+At 2 048 neurons the learning cultures end at 0.97 hits per rally against
+0.60 and 0.55; at 4 096 at 1.52 against 0.61 and 0.57. With STDP switched off
+nothing changes (+0.03, +0.01, +0.02), and with the short v0.2 wiring neither
+(+0.05, −0.05, +0.01): the culture learns through plasticity, and only when
 the ball's position reaches the motor regions. Single cultures vary, so one
 pair on the page may not show it; the effect is in the average.
 

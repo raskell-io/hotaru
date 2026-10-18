@@ -303,7 +303,7 @@ function drawVerdict() {
         state = 'ahead';
         html = avoid
           ? `${after} <b>The culture is learning:</b> it is ahead by more than chance alone would explain ${margin}. `
-            + 'Across 16 cultures, 13 got better this way while the mirrored controls did not.'
+            + 'Across 16 cultures, the ball cultures ended at 0.97 hits per rally and the mirrored controls at 0.60.'
           : `${after} <b>The feedback culture is ahead</b> by more than chance alone would explain ${margin}. `
             + 'Across 16 cultures such leads did not hold up; see whether this one does.';
       } else {
