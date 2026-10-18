@@ -13,3 +13,6 @@ crate-type = ["cdylib", "rlib"]
 [features]
 # Exports the C ABI the web page calls. Only for building web/hotaru.wasm.
 web = []
+
+[dependencies]
+libm = "0.2.16"

@@ -1,7 +1,7 @@
 // Thin wrapper around hotaru.wasm (core/src/web.rs). Each culture is a
 // session in the module, addressed by handle.
 
-export const MODES = { culture: 0, feedback: 1, random: 2, silent: 3 };
+export const MODES = { culture: 0, feedback: 1, random: 2, silent: 3, avoid: 4, mirror: 5 };
 
 export async function loadHotaru(url = 'hotaru.wasm') {
   let instance;
@@ -70,7 +70,7 @@ class Culture {
   game() {
     const ptr = this.x.hotaru_game(this.id);
     if (!ptr) return null;
-    const g = this.#f32(ptr, 10);
+    const g = this.#f32(ptr, 12);
     return {
       ball: [g[0], g[1]],
       paddle: g[2],
@@ -81,6 +81,8 @@ class Culture {
       rally: g[7],
       hits: g[8],
       misses: g[9],
+      coupling: g[10],
+      quiet: g[11] > 0,
     };
   }
 

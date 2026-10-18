@@ -5,12 +5,12 @@
 use std::cell::UnsafeCell;
 
 use crate::Params;
-use crate::session::{Feedback, Role, Session, Stimulus};
+use crate::session::{Avoidance, Feedback, Role, Session, Stimulus};
 
 struct Slot {
     session: Session,
     /// Scratch for hotaru_game, see there.
-    game: [f32; 10],
+    game: [f32; 12],
 }
 
 struct Slots(UnsafeCell<Vec<Option<Slot>>>);
@@ -33,18 +33,26 @@ fn session(id: u32) -> &'static mut Session {
 }
 
 /// `mode`: 0 a culture on its own, 1 Pong with DishBrain feedback, 2 Pong
-/// with random feedback, 3 Pong without feedback. Returns the handle.
+/// with random feedback, 3 Pong without feedback, 4 DishBrain feedback with
+/// stimulation avoidance toward the ball, 5 the same toward the mirrored
+/// ball. Returns the handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn hotaru_create(seed_hi: u32, seed_lo: u32, neurons: u32, mode: u32) -> u32 {
     let seed = (seed_hi as u64) << 32 | seed_lo as u64;
     let params = Params { neurons: neurons.clamp(64, 16384) as usize, ..Params::default() };
     let feedback = match mode {
-        1 => Some(Feedback::Contingent),
+        1 | 4 | 5 => Some(Feedback::Contingent),
         2 => Some(Feedback::Random),
         3 => Some(Feedback::Silent),
         _ => None,
     };
-    let fresh = Slot { session: Session::new(seed, params, feedback), game: [0.0; 10] };
+    let mut session = Session::new(seed, params, feedback);
+    session.set_avoidance(match mode {
+        4 => Avoidance::Ball,
+        5 => Avoidance::Mirror,
+        _ => Avoidance::Off,
+    });
+    let fresh = Slot { session, game: [0.0; 12] };
     let all = slots();
     match all.iter().position(Option::is_none) {
         Some(free) => {
@@ -163,9 +171,11 @@ pub extern "C" fn hotaru_weight(id: u32) -> f32 {
     session(id).culture().mean_excitatory_weight()
 }
 
-/// Game state as ten floats: ball x, ball y, paddle y, paddle drive,
+/// Game state as twelve floats: ball x, ball y, paddle y, paddle drive,
 /// stimulus (0 none, 1 predictable, 2 unpredictable), ms since the stimulus
-/// began, waiting for a serve (0 or 1), hits in this rally, hits, misses.
+/// began, waiting for a serve (0 or 1), hits in this rally, hits, misses, and
+/// the ball-to-paddle coupling (see `Game::coupling`), and whether
+/// stimulation avoidance is holding the sensory input back (0 or 1).
 /// Null without a game.
 #[unsafe(no_mangle)]
 pub extern "C" fn hotaru_game(id: u32) -> *const f32 {
@@ -189,6 +199,8 @@ pub extern "C" fn hotaru_game(id: u32) -> *const f32 {
         game.rally() as f32,
         game.hits() as f32,
         game.misses() as f32,
+        game.coupling(),
+        game.quiet() as u8 as f32,
     ];
     slot.game.as_ptr()
 }

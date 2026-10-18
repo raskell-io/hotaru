@@ -2,7 +2,7 @@ PORT ?= 8646
 WASM := target/wasm32-unknown-unknown/release/hotaru_core.wasm
 DIST := dist
 
-.PHONY: build serve site test probe experiment clean
+.PHONY: build serve site test probe experiment coupling clean
 
 # The simulation, compiled for the web page.
 build:
@@ -28,9 +28,14 @@ test:
 probe:
 	cargo run --release --example probe -- $(ARGS)
 
-# Pong under each feedback condition, e.g. make experiment ARGS="seeds=16 minutes=20".
+# Pong under each feedback condition, e.g. make experiment ARGS="seeds=16 minutes=20";
+# avoidance=1 compares stimulation avoidance with its mirrored control.
 experiment:
 	cargo run --release --example experiment -- $(ARGS)
+
+# How much the ball's position reaches the motor regions, per culture.
+coupling:
+	cargo run --release --example coupling -- $(ARGS)
 
 clean:
 	cargo clean

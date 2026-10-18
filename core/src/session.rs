@@ -19,6 +19,7 @@
 //! one (random electrodes at random times, 5 Hz on average, for 4 s) while
 //! the ball waits to be served again.
 
+use crate::math;
 use crate::pong::{Event, Pong};
 use crate::rng::Rng;
 use crate::{Culture, Params};
@@ -34,8 +35,19 @@ const SERVE_PAUSE_MS: u32 = 4000;
 const SENSE_HZ: (f32, f32) = (4.0, 40.0);
 /// Motor readout smoothing and gain.
 const MOTOR_TAU_MS: f32 = 50.0;
-const MOTOR_FLOOR: f32 = 2.0;
 const MOTOR_GAIN: f32 = 3.0;
+/// Each motor region is read relative to its own mean over this long, so a
+/// region that is simply more active does not pin the paddle to one wall.
+const MOTOR_BASELINE_MS: f32 = 20_000.0;
+/// Lowest baseline, and the relative activity that counts as no signal.
+const MOTOR_FLOOR: f32 = 2.0;
+const MOTOR_RELATIVE_FLOOR: f32 = 1.0;
+/// Stimulation avoidance: the paddle counts as level with the target within
+/// this distance, and as heading for it with at least this drive.
+const AVOID_LEVEL: f32 = 0.05;
+const AVOID_DRIVE: f32 = 0.2;
+/// How fast the expected outcome follows the feedback, per event.
+const EXPECTATION_RATE: f32 = 0.1;
 
 /// What the culture is told after a hit or a miss.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +58,19 @@ pub enum Feedback {
     Random,
     /// No feedback at all.
     Silent,
+}
+
+/// Stimulation avoidance (Sinapayen, Masumori & Ikegami 2017): while the
+/// ball is in play, the sensory pulses stop whenever the paddle moves toward
+/// a target, so acting on the input is what makes it go quiet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Avoidance {
+    Off,
+    /// The target is the ball.
+    Ball,
+    /// The target is the ball mirrored top to bottom: the same rule with no
+    /// relation to the game, as a control.
+    Mirror,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,10 +129,18 @@ impl Session {
     pub fn game(&self) -> Option<&Game> {
         self.game.as_ref()
     }
+
+    /// Switch stimulation avoidance on or off for the game.
+    pub fn set_avoidance(&mut self, avoidance: Avoidance) {
+        if let Some(game) = &mut self.game {
+            game.avoidance = avoidance;
+        }
+    }
 }
 
 pub struct Game {
     feedback: Feedback,
+    avoidance: Avoidance,
     pong: Pong,
     /// Serves and returns; seeded alike for every feedback mode.
     rng: Rng,
@@ -125,13 +158,21 @@ pub struct Game {
     sense_phase: f32,
     up_level: f32,
     down_level: f32,
+    up_baseline: f32,
+    down_baseline: f32,
     drive: f32,
+    /// Running mean of the feedback, 1 for predictable and 0 for
+    /// unpredictable; the reward is the surprise relative to it.
+    expected: f32,
 
     rally: u32,
     hits: u32,
     misses: u32,
     /// Finished rallies as (end time ms, hits) pairs.
     rallies: Vec<u32>,
+    /// Sums for the correlation of ball height with paddle drive while the
+    /// ball is in play: n, x, y, xx, yy, xy.
+    coupling: [f64; 6],
 }
 
 impl Game {
@@ -161,6 +202,7 @@ impl Game {
         }
         Game {
             feedback,
+            avoidance: Avoidance::Off,
             pong,
             rng,
             noise: Rng::new(seed ^ 0xF00D_CAFE),
@@ -174,11 +216,15 @@ impl Game {
             sense_phase: 0.0,
             up_level: 0.0,
             down_level: 0.0,
+            up_baseline: MOTOR_FLOOR,
+            down_baseline: MOTOR_FLOOR,
             drive: 0.0,
+            expected: 0.3,
             rally: 0,
             hits: 0,
             misses: 0,
             rallies: Vec::new(),
+            coupling: [0.0; 6],
         }
     }
 
@@ -188,6 +234,12 @@ impl Game {
         culture.step();
         self.read_motor(culture);
 
+        if self.serve_at.is_none() {
+            let (x, y) = ((self.pong.ball[1] - 0.5) as f64, self.drive as f64);
+            for (sum, v) in self.coupling.iter_mut().zip([1.0, x, y, x * x, y * y, x * y]) {
+                *sum += v;
+            }
+        }
         if let Some(at) = self.serve_at {
             if t >= at {
                 self.serve_at = None;
@@ -199,25 +251,30 @@ impl Game {
             Some(Event::Hit) => {
                 self.hits += 1;
                 self.rally += 1;
-                self.give_feedback(true, t);
+                self.give_feedback(true, t, culture);
             }
             Some(Event::Miss) => {
                 self.misses += 1;
                 self.rallies.extend_from_slice(&[t, self.rally]);
                 self.rally = 0;
                 self.serve_at = Some(t + SERVE_PAUSE_MS);
-                self.give_feedback(false, t);
+                self.give_feedback(false, t, culture);
             }
             None => {}
         }
     }
 
-    fn give_feedback(&mut self, hit: bool, t: u32) {
+    /// Stimulate after a hit or miss, and reward the culture by how much
+    /// better the feedback was than expected (only with eligibility traces).
+    fn give_feedback(&mut self, hit: bool, t: u32, culture: &mut Culture) {
         let predictable = match self.feedback {
             Feedback::Contingent => hit,
             Feedback::Random => self.noise.f32() < 0.5,
             Feedback::Silent => return,
         };
+        let outcome = if predictable { 1.0 } else { 0.0 };
+        culture.reward(outcome - self.expected);
+        self.expected += (outcome - self.expected) * EXPECTATION_RATE;
         self.stimulus = if predictable {
             Stimulus::Predictable { since: t }
         } else {
@@ -249,7 +306,7 @@ impl Game {
             Stimulus::None => {}
             _ => self.stimulus = Stimulus::None,
         }
-        if self.serve_at.is_some() {
+        if self.serve_at.is_some() || self.avoided() {
             return;
         }
         let [x, y] = self.pong.ball;
@@ -264,14 +321,31 @@ impl Game {
         }
     }
 
+    /// True while the paddle heads for the avoidance target, or is level
+    /// with it, so the sensory input stays quiet.
+    fn avoided(&self) -> bool {
+        let y = self.pong.ball[1];
+        let target = match self.avoidance {
+            Avoidance::Off => return false,
+            Avoidance::Ball => y,
+            Avoidance::Mirror => 1.0 - y,
+        };
+        let error = target - self.pong.paddle;
+        error.abs() < AVOID_LEVEL || error * self.drive > AVOID_DRIVE * error.abs()
+    }
+
     fn read_motor(&mut self, culture: &Culture) {
         let counts = culture.step_counts();
         let sum = |set: &[usize]| set.iter().map(|&e| counts[e]).sum::<u32>() as f32;
-        let keep = (-1.0 / MOTOR_TAU_MS).exp();
+        let keep = math::exp(-1.0 / MOTOR_TAU_MS);
         self.up_level = self.up_level * keep + sum(&self.up);
         self.down_level = self.down_level * keep + sum(&self.down);
-        let (u, d) = (self.up_level, self.down_level);
-        self.drive = (MOTOR_GAIN * (d - u) / (u + d + MOTOR_FLOOR)).clamp(-1.0, 1.0);
+        let slow = 1.0 / MOTOR_BASELINE_MS;
+        self.up_baseline += (self.up_level - self.up_baseline) * slow;
+        self.down_baseline += (self.down_level - self.down_baseline) * slow;
+        let u = self.up_level / self.up_baseline.max(MOTOR_FLOOR);
+        let d = self.down_level / self.down_baseline.max(MOTOR_FLOOR);
+        self.drive = (MOTOR_GAIN * (d - u) / (u + d + MOTOR_RELATIVE_FLOOR)).clamp(-1.0, 1.0);
     }
 
     pub fn feedback(&self) -> Feedback {
@@ -307,6 +381,19 @@ impl Game {
     /// Finished rallies as (end time ms, hits) pairs.
     pub fn rallies(&self) -> &[u32] {
         &self.rallies
+    }
+    /// True while stimulation avoidance holds the sensory input back.
+    pub fn quiet(&self) -> bool {
+        self.serve_at.is_none() && self.stimulus == Stimulus::None && self.avoided()
+    }
+    /// Correlation of the ball's height with the paddle drive so far, -1..1:
+    /// how much the ball's position reaches the motor regions. Positive means
+    /// the paddle tends to move toward the ball. NaN before there is data.
+    pub fn coupling(&self) -> f32 {
+        let [n, x, y, xx, yy, xy] = self.coupling;
+        let cov = xy / n - x / n * (y / n);
+        let sd = ((xx / n - (x / n).powi(2)) * (yy / n - (y / n).powi(2))).sqrt();
+        (cov / sd) as f32
     }
 }
 
@@ -347,5 +434,21 @@ mod tests {
         let b = Session::new(3, small(), Some(Feedback::Random));
         assert_eq!(a.culture().positions(), b.culture().positions());
         assert_eq!(a.game().unwrap().pong().ball, b.game().unwrap().pong().ball);
+    }
+
+    #[test]
+    fn avoidance_quiets_the_input_only_when_on() {
+        let quiet_ms = |avoidance| {
+            let mut s = Session::new(4, small(), Some(Feedback::Contingent));
+            s.set_avoidance(avoidance);
+            (0..20_000).filter(|_| {
+                s.step();
+                s.game().unwrap().quiet()
+            }).count()
+        };
+        assert_eq!(quiet_ms(Avoidance::Off), 0);
+        let (ball, mirror) = (quiet_ms(Avoidance::Ball), quiet_ms(Avoidance::Mirror));
+        assert!(ball > 1000 && mirror > 1000, "quiet for {ball} and {mirror} ms");
+        assert_ne!(ball, mirror);
     }
 }

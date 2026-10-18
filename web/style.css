@@ -315,7 +315,24 @@ select { padding-right: 10px; }
 .player[data-tone="firefly"] h2::before { background: var(--firefly); box-shadow: 0 0 10px var(--firefly); }
 .player[data-tone="ice"] h2::before { background: var(--ice); box-shadow: 0 0 10px var(--ice); }
 
-.control-pick select { margin-top: 2px; padding: 4px 10px; font-size: 12px; }
+.experiment-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 22px;
+  color: var(--faint);
+  font: 500 12px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.experiment-pick select {
+  max-width: 100%;
+  font: 500 14px var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  border-color: #2f3f38;
+}
 
 .chip {
   flex: none;
@@ -356,7 +373,7 @@ select { padding-right: 10px; }
 
 .stats.stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 16px 0 0;
   padding-top: 14px;

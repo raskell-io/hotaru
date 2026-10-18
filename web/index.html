@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hotaru · can a dish of neurons learn Pong?</title>
-  <meta name="description" content="Two identical simulated neuron cultures play Pong through a 60-electrode array. One gets DishBrain's feedback, the other gets the same pulses at random. Watch whether their rallies diverge.">
+  <meta name="description" content="Two identical simulated neuron cultures play Pong through a 60-electrode array, one with a learning condition and one with a control. Watch whether their rallies diverge.">
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,15 +27,22 @@
 
   <main id="top">
     <header class="intro">
-      <p class="eyebrow">Simulation · v0.2 · the closed loop</p>
+      <p class="eyebrow">Simulation · v0.3 · what makes it learn</p>
       <h1>Can a dish of neurons learn Pong?</h1>
       <p class="lede">
         Two copies of the same culture play Pong through their electrodes and face the same serves.
-        The only difference is what they are told after each hit or miss. The first gets the feedback
-        from the DishBrain experiment: a predictable pulse after a hit, four seconds of noise after a
-        miss. The control gets the same pulses at random. If the feedback teaches the culture anything,
-        its rallies should get longer than the control's.
+        They differ in one condition only. DishBrain's feedback alone did not teach our cultures
+        anything. What did: the input about the ball goes quiet while the paddle moves toward it, so
+        acting on the input is what silences it. The control gets the same rule for a mirror image of
+        the ball. If the culture learns, its rallies grow longer than the control's.
       </p>
+      <label class="experiment-pick">Experiment
+        <select id="experiment">
+          <option value="avoid" selected>Quiet when moving toward the ball, vs. a mirrored ball</option>
+          <option value="random">DishBrain feedback, vs. the same pulses at random</option>
+          <option value="silent">DishBrain feedback, vs. no feedback</option>
+        </select>
+      </label>
     </header>
 
     <p class="verdict" id="verdict" data-state="same" aria-live="polite"></p>
@@ -44,8 +51,8 @@
       <article class="player" id="p-feedback" data-tone="firefly">
         <header class="player-head">
           <div>
-            <h2>DishBrain feedback</h2>
-            <p class="note">Predictable pulse after a hit, noise after a miss.</p>
+            <h2 data-role="title">DishBrain feedback</h2>
+            <p class="note" data-role="note">Predictable pulse after a hit, noise after a miss.</p>
           </div>
           <span class="chip" data-role="chip">Playing</span>
         </header>
@@ -62,19 +69,15 @@
           <div><dt>Last 5 min</dt><dd data-stat="recent">–</dd></div>
           <div><dt>Aces</dt><dd data-stat="aces">–</dd></div>
           <div><dt>Mean synapse</dt><dd data-stat="weight">–</dd></div>
+          <div title="How much the paddle follows the ball: the correlation of the ball's height with the motor drive. Near 0, the ball does not reach the motor regions."><dt>Ball → paddle</dt><dd data-stat="coupling">–</dd></div>
         </dl>
       </article>
 
       <article class="player" id="p-control" data-tone="ice">
         <header class="player-head">
           <div>
-            <h2>Control</h2>
-            <label class="note control-pick">
-              <select id="control" aria-label="Control condition">
-                <option value="random" selected>Same pulses, at random</option>
-                <option value="silent">No feedback at all</option>
-              </select>
-            </label>
+            <h2 data-role="title">Control</h2>
+            <p class="note" data-role="note">Same pulses, at random.</p>
           </div>
           <span class="chip" data-role="chip">Playing</span>
         </header>
@@ -91,6 +94,7 @@
           <div><dt>Last 5 min</dt><dd data-stat="recent">–</dd></div>
           <div><dt>Aces</dt><dd data-stat="aces">–</dd></div>
           <div><dt>Mean synapse</dt><dd data-stat="weight">–</dd></div>
+          <div title="How much the paddle follows the ball: the correlation of the ball's height with the motor drive. Near 0, the ball does not reach the motor regions."><dt>Ball → paddle</dt><dd data-stat="coupling">–</dd></div>
         </dl>
       </article>
     </section>
@@ -103,7 +107,7 @@
         </div>
         <canvas id="chart" aria-label="Hits per rally over time for both cultures"></canvas>
         <p class="legend left">
-          <span><i class="line firefly"></i>DishBrain feedback</span>
+          <span><i class="line firefly"></i><span id="legend-learner">DishBrain feedback</span></span>
           <span><i class="line ice"></i><span id="legend-control">Control, random feedback</span></span>
           <span class="muted">Simulated time <b id="s-time">0:00</b></span>
         </p>
@@ -148,6 +152,7 @@
           <li><b>Sensing.</b> The two middle columns of electrodes are sensory. The row that matches the ball's height is pulsed, from 4 Hz when the ball is far away to 40 Hz when it reaches the paddle.</li>
           <li><b>Acting.</b> The outer columns are motor regions. More spikes in the top half move the paddle up, more in the bottom half move it down.</li>
           <li><b>Feedback.</b> After a hit, all sensory electrodes pulse at 100 Hz for 100 ms. After a miss, random electrodes fire at random times for 4 s while the ball waits to be served.</li>
+          <li><b>Going quiet.</b> In the first experiment, the ball input pauses while the paddle heads for the ball. The control pauses for a mirror image of the ball instead, so its quiet carries no information about the game.</li>
           <li><b>Plasticity.</b> Synapses change with spike timing (STDP): input that arrives just before a neuron fires gets stronger, input that arrives just after gets weaker.</li>
         </ul>
       </div>
@@ -155,29 +160,33 @@
         <h2>What we found so far</h2>
         <p>
           We ran 16 culture pairs of 2 048 neurons for 20 simulated minutes per condition and compared
-          the first five minutes with the last five. With DishBrain feedback, rallies grew by
-          0.05 ± 0.05 hits; with random feedback they changed by −0.02 ± 0.04, and without feedback by
-          0.00 ± 0.05. That is no reliable learning. With 4 096 neurons, or with stronger plasticity,
-          the picture was the same.
+          the first five minutes with the last five. DishBrain's feedback alone did not help: rallies
+          grew by +0.15 ± 0.05 hits, but by +0.07 ± 0.04 with random feedback and +0.04 without any,
+          and with 4 096 neurons the feedback gained nothing at all. Giving the culture a reward signal
+          through eligibility traces did not help either.
         </p>
         <p>
-          One likely reason: STDP links spikes about 20 ms apart, but the feedback arrives seconds after
-          the motor activity that earned it. Something has to bridge that gap, and finding out what is
-          the next experiment. Run your own pair here and see whether your seed behaves differently.
+          Two things did. First, the wiring: with mostly short connections, the ball's position never
+          reached the motor regions, so there was nothing to learn. With connections reaching about
+          half a millimetre, it does (the Ball → paddle number on each culture). Second, letting the
+          input go quiet when the paddle moves toward the ball. Then rallies grew by +0.32 ± 0.10 hits
+          (13 of 16 cultures), while the mirrored control stayed flat (+0.01 ± 0.06). With plasticity
+          switched off, neither changed. With 4 096 neurons the gain was +0.77 ± 0.25.
         </p>
       </div>
       <div>
         <h2>Background</h2>
         <p>
           DishBrain wired real cortical neurons to Pong and reported that rallies improved within
-          minutes of feedback. The interpretation is debated. Hotaru is a simplified model of that
+          minutes of feedback. The interpretation is debated. One proposal is that cultures learn to
+          act so as to avoid stimulation they cannot predict. Hotaru is a simplified model of that
           protocol, not of real neurons, and makes no claim about either.
         </p>
         <p class="refs">
           Kagan et al. (2022), <i>In vitro neurons learn and exhibit sentience when embodied in a simulated
           game-world</i>, Neuron. Izhikevich (2003). Tsodyks &amp; Markram (1997). Sinapayen, Masumori &amp;
           Ikegami (2017), <i>Learning by stimulation avoidance</i>. Reproduce the numbers with
-          <code>cargo run --release --example experiment</code>.
+          <code>make experiment ARGS="seeds=16 avoidance=1"</code>.
         </p>
       </div>
     </section>

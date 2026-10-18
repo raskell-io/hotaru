@@ -1,6 +1,7 @@
 //! Single-paddle Pong, as in DishBrain: the paddle guards the left edge of a
 //! unit square, the ball bounces off the other three walls.
 
+use crate::math;
 use crate::rng::Rng;
 
 pub const PADDLE_HEIGHT: f32 = 0.25;
@@ -37,7 +38,7 @@ impl Pong {
         let angle = (15.0 + 35.0 * rng.f32()).to_radians();
         let down = if rng.f32() < 0.5 { 1.0 } else { -1.0 };
         self.ball = [1.0 - BALL_RADIUS, 0.2 + 0.6 * rng.f32()];
-        self.velocity = [-BALL_SPEED * angle.cos(), down * BALL_SPEED * angle.sin()];
+        self.velocity = [-BALL_SPEED * math::cos(angle), down * BALL_SPEED * math::sin(angle)];
     }
 
     /// Advance one millisecond. `drive` in -1..1 moves the paddle up (negative)
@@ -68,7 +69,7 @@ impl Pong {
                 // Return it at a slightly new angle, so rallies do not loop.
                 let angle = (15.0 + 35.0 * rng.f32()).to_radians();
                 let down = if self.velocity[1] >= 0.0 { 1.0 } else { -1.0 };
-                self.velocity = [BALL_SPEED * angle.cos(), down * BALL_SPEED * angle.sin()];
+                self.velocity = [BALL_SPEED * math::cos(angle), down * BALL_SPEED * math::sin(angle)];
                 self.ball[0] = BALL_RADIUS;
                 return Some(Event::Hit);
             }

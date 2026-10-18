@@ -10,6 +10,7 @@
 //! The simulation advances in fixed 1 ms steps and is fully deterministic
 //! for a given seed and [`Params`].
 
+pub mod math;
 pub mod mea;
 pub mod pong;
 pub mod rng;
@@ -62,6 +63,13 @@ pub struct Params {
     pub stdp_loss: f32,
     /// Upper bound for a plastic weight, as a multiple of `w_exc`.
     pub w_max: f32,
+    /// With a positive value, STDP does not change weights directly but tags
+    /// synapses with an eligibility trace that fades over this many ms;
+    /// `Culture::reward` then turns the tags into weight changes. Zero
+    /// applies STDP directly.
+    pub eligibility_ms: f32,
+    /// Weight change per unit of reward and eligibility.
+    pub reward_gain: f32,
 }
 
 impl Default for Params {
@@ -70,7 +78,7 @@ impl Default for Params {
             neurons: 4096,
             synapses: 100,
             radius: 1000.0,
-            length_scale: 150.0,
+            length_scale: 500.0,
             long_range: 0.05,
             inhibitory: 0.2,
             w_exc: 6.0,
@@ -88,6 +96,8 @@ impl Default for Params {
             stdp_gain: 0.10,
             stdp_loss: 0.12,
             w_max: 2.0,
+            eligibility_ms: 0.0,
+            reward_gain: 1.0,
         }
     }
 }
@@ -128,6 +138,10 @@ pub struct Culture {
     /// STDP traces: recent spiking as presynaptic and postsynaptic partner.
     pre_trace: Vec<f32>,
     post_trace: Vec<f32>,
+    /// Eligibility of each synapse and when it was last brought up to date;
+    /// empty unless `eligibility_ms` is positive.
+    eligibility: Vec<f32>,
+    eligibility_at: Vec<u32>,
 
     electrodes: Vec<Electrode>,
     electrode_positions: Vec<f32>,
@@ -157,8 +171,8 @@ impl Culture {
             // Uniform in the disc.
             let rho = r * rng.f32().sqrt();
             let theta = std::f32::consts::TAU * rng.f32();
-            positions.push(rho * theta.cos());
-            positions.push(rho * theta.sin());
+            positions.push(rho * math::cos(theta));
+            positions.push(rho * math::sin(theta));
         }
 
         let (mut kinds, mut a, mut b, mut c, mut d) =
@@ -202,7 +216,7 @@ impl Culture {
                 } else {
                     grid.sample_near(&mut rng, px, py, params.length_scale, i)
                 };
-                let dist = (positions[2 * j] - px).hypot(positions[2 * j + 1] - py);
+                let dist = math::hypot(positions[2 * j] - px, positions[2 * j + 1] - py);
                 let delay = (1.0 + dist / params.velocity).round() as usize;
                 syn_target.push(j as u32);
                 syn_delay.push(delay.clamp(1, DELAYS - 1) as u8);
@@ -243,7 +257,7 @@ impl Culture {
         for (ei, e) in electrodes.iter().enumerate() {
             stim_start.push(stim_targets.len() as u32);
             for i in 0..n {
-                let dist = (positions[2 * i] - e.x).hypot(positions[2 * i + 1] - e.y);
+                let dist = math::hypot(positions[2 * i] - e.x, positions[2 * i + 1] - e.y);
                 if dist <= params.record_radius {
                     recorded_by[i] = ei as u32;
                 }
@@ -258,6 +272,7 @@ impl Culture {
         // fully rested fires one oversized burst.
         let resources = (0..n).map(|_| 0.3 + 0.3 * rng.f32()).collect();
         let noise_p = (params.noise_rate / 1000.0).clamp(0.0, 1.0);
+        let tags = if params.eligibility_ms > 0.0 { syn_weight.len() } else { 0 };
         Culture {
             noise_threshold: (noise_p as f64 * u32::MAX as f64) as u32,
             time: 0,
@@ -283,6 +298,8 @@ impl Culture {
             fired: Vec::with_capacity(n),
             pre_trace: vec![0.0; n],
             post_trace: vec![0.0; n],
+            eligibility: vec![0.0; tags],
+            eligibility_at: vec![0; tags],
             counts: vec![0; electrodes.len()],
             step_counts: vec![0; electrodes.len()],
             electrodes,
@@ -377,8 +394,10 @@ impl Culture {
     /// fired this step. Delays are ignored; most are one or two ms.
     fn plasticity(&mut self) {
         let p = &self.params;
-        let decay = (-1.0 / p.stdp_tau).exp();
+        let t = self.time;
+        let decay = math::exp(-1.0 / p.stdp_tau);
         let w_max = p.w_max * p.w_exc;
+        let tagging = p.eligibility_ms > 0.0;
         for (pre, post) in self.pre_trace.iter_mut().zip(self.post_trace.iter_mut()) {
             *pre *= decay;
             *post *= decay;
@@ -390,22 +409,51 @@ impl Culture {
             for (&k, &pre) in self.in_synapse[s..e].iter().zip(&self.in_pre[s..e]) {
                 let (k, pre) = (k as usize, pre as usize);
                 if self.kinds[pre] == 0 {
-                    let w = self.syn_weight[k] + p.stdp_gain * self.pre_trace[pre];
-                    self.syn_weight[k] = w.min(w_max);
+                    let dw = p.stdp_gain * self.pre_trace[pre];
+                    if tagging {
+                        tag(&mut self.eligibility, &mut self.eligibility_at, k, dw, t, p.eligibility_ms);
+                    } else {
+                        self.syn_weight[k] = (self.syn_weight[k] + dw).min(w_max);
+                    }
                 }
             }
             // f fired after its targets: weaken its outgoing synapses.
             if self.kinds[f] == 0 {
                 let (s, e) = (self.syn_start[f] as usize, self.syn_start[f + 1] as usize);
                 for k in s..e {
-                    let post = self.post_trace[self.syn_target[k] as usize];
-                    self.syn_weight[k] = (self.syn_weight[k] - p.stdp_loss * post).max(0.0);
+                    let dw = -p.stdp_loss * self.post_trace[self.syn_target[k] as usize];
+                    if tagging {
+                        tag(&mut self.eligibility, &mut self.eligibility_at, k, dw, t, p.eligibility_ms);
+                    } else {
+                        self.syn_weight[k] = (self.syn_weight[k] + dw).max(0.0);
+                    }
                 }
             }
         }
         for &f in &self.fired {
             self.pre_trace[f as usize] += 1.0;
             self.post_trace[f as usize] += 1.0;
+        }
+    }
+
+    /// Turn the eligibility of every excitatory synapse into a weight change:
+    /// tagged synapses grow with positive `reward` and shrink with negative.
+    /// Does nothing unless `eligibility_ms` is positive.
+    pub fn reward(&mut self, reward: f32) {
+        let p = &self.params;
+        if p.eligibility_ms <= 0.0 {
+            return;
+        }
+        let w_max = p.w_max * p.w_exc;
+        for i in 0..p.neurons {
+            if self.kinds[i] != 0 {
+                continue;
+            }
+            for k in self.syn_start[i] as usize..self.syn_start[i + 1] as usize {
+                tag(&mut self.eligibility, &mut self.eligibility_at, k, 0.0, self.time, p.eligibility_ms);
+                let w = self.syn_weight[k] + p.reward_gain * reward * self.eligibility[k];
+                self.syn_weight[k] = w.clamp(0.0, w_max);
+            }
         }
     }
 
@@ -455,7 +503,7 @@ impl Culture {
                 0.0
             } else {
                 // last_spike is set during step t and time is then t + 1.
-                ((self.time - 1 - last) as f32 * k).exp()
+                math::exp((self.time - 1 - last) as f32 * k)
             };
         }
         &self.glow
@@ -534,10 +582,10 @@ impl Grid {
     /// never `exclude`.
     fn sample_near(&self, rng: &mut Rng, x: f32, y: f32, scale: f32, exclude: usize) -> usize {
         loop {
-            let dist = -scale * (1.0 - rng.f32()).ln();
+            let dist = -scale * math::ln(1.0 - rng.f32());
             let theta = std::f32::consts::TAU * rng.f32();
-            let cx = ((x + dist * theta.cos() - self.origin) / self.cell).floor();
-            let cy = ((y + dist * theta.sin() - self.origin) / self.cell).floor();
+            let cx = ((x + dist * math::cos(theta) - self.origin) / self.cell).floor();
+            let cy = ((y + dist * math::sin(theta) - self.origin) / self.cell).floor();
             if cx < 0.0 || cy < 0.0 || cx >= self.side as f32 || cy >= self.side as f32 {
                 continue;
             }
@@ -552,6 +600,16 @@ impl Grid {
             }
         }
     }
+}
+
+/// Decay synapse `k`'s eligibility to time `t`, then add `dw`.
+fn tag(eligibility: &mut [f32], at: &mut [u32], k: usize, dw: f32, t: u32, tau_ms: f32) {
+    let age = t - at[k];
+    if age > 0 {
+        eligibility[k] *= math::exp(-(age as f32) / tau_ms);
+        at[k] = t;
+    }
+    eligibility[k] += dw;
 }
 
 #[cfg(test)]
@@ -586,7 +644,7 @@ mod tests {
         let n = 4096;
         let mut c = Culture::new(11, Params { neurons: n, ..Params::default() });
         let (mut bursts, mut above, mut total) = (0, false, 0);
-        for _ in 0..2000 {
+        for _ in 0..4000 {
             c.clear_output();
             c.run(10);
             let spikes = c.spikes().len() / 2;
@@ -596,8 +654,8 @@ mod tests {
             bursts += (burst && !above) as u32;
             above = burst;
         }
-        let rate = total as f32 / n as f32 / 20.0;
-        assert!((3..=30).contains(&bursts), "{bursts} bursts in 20 s");
+        let rate = total as f32 / n as f32 / 40.0;
+        assert!((3..=60).contains(&bursts), "{bursts} bursts in 40 s");
         assert!((0.3..5.0).contains(&rate), "mean rate {rate} Hz");
     }
 
@@ -626,5 +684,32 @@ mod tests {
             (c.positions[2 * i] - e.x).hypot(c.positions[2 * i + 1] - e.y) <= 100.0
         });
         assert!(near);
+    }
+
+    #[test]
+    fn eligibility_waits_for_reward() {
+        let p = Params { plasticity: true, eligibility_ms: 1000.0, ..small() };
+        let mut c = Culture::new(6, p);
+        let w0 = c.syn_weight.clone();
+        c.run(3000);
+        assert_eq!(c.syn_weight, w0, "tags alone change no weight");
+        c.reward(1.0);
+        assert!(c.syn_weight != w0);
+
+        // Punishment moves every synapse the other way.
+        let mut d = Culture::new(6, Params { plasticity: true, eligibility_ms: 1000.0, ..small() });
+        d.run(3000);
+        d.reward(-1.0);
+        let opposite = (0..w0.len()).all(|k| (c.syn_weight[k] - w0[k]) * (d.syn_weight[k] - w0[k]) <= 0.0);
+        assert!(opposite);
+    }
+
+    #[test]
+    fn reward_without_eligibility_does_nothing() {
+        let mut c = Culture::new(7, Params { plasticity: true, ..small() });
+        c.run(500);
+        let w = c.syn_weight.clone();
+        c.reward(1.0);
+        assert_eq!(c.syn_weight, w);
     }
 }
